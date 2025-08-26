@@ -71,11 +71,48 @@ export default function InsightsPage() {
 
       setResult(nudged as Doc);
       setActive("YAML");
-    } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : "Something went wrong");
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : "Something went wrong");
     } finally {
       setLoading(false);
     }
+  }
+
+  function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      const text = typeof reader.result === "string" ? reader.result : "";
+      setMd(text);
+    };
+    reader.readAsText(file); // comment: read .md into textarea
+    e.target.value = ""; // comment: allow re-uploading same file
+  }
+
+  function formatTimestamp(d = new Date()) {
+    const pad = (n: number) => String(n).padStart(2, "0"); // comment: ensure 2 digits
+    const yyyy = d.getFullYear();
+    const mm = pad(d.getMonth() + 1);
+    const dd = pad(d.getDate());
+    const hh = pad(d.getHours());
+    const min = pad(d.getMinutes());
+    return `${yyyy}${mm}${dd}-${hh}${min}`;
+  }
+
+  function downloadMd() {
+    if (!result) return; // need frontmatter
+    const front = yamlText.trimEnd();
+    const content = `${front}\n\n${md}`; // comment: YAML + original body
+    const blob = new Blob([content], { type: "text/markdown;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `journal-${formatTimestamp()}.md`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
   }
 
   async function copyYaml() {
@@ -94,20 +131,43 @@ export default function InsightsPage() {
       <div className="grid gap-6 md:grid-cols-2">
         {/* Left: input */}
         <div>
+          <label className="block text-sm mb-2">
+            <span className="mr-2">Upload .md</span>
+            <input
+              type="file"
+              accept=".md"
+              onChange={handleFileChange}
+              className="text-sm file:mr-3 file:rounded file:border file:px-3 file:py-1 file:bg-gray-100 file:border-gray-300"
+            />
+          </label>
+
           <textarea
             className="w-full h-[320px] p-3 border rounded bg-black/60 text-gray-100 outline-none focus:ring-2 focus:ring-blue-500"
             placeholder="Paste Obsidian markdown here..."
             value={md}
             onChange={(e) => setMd(e.target.value)}
           />
-          <button
-            onClick={generate}
-            disabled={loading || !md.trim()}
-            className="mt-3 inline-flex items-center rounded bg-blue-600 px-4 py-2 text-white disabled:opacity-50"
-          >
-            {loading ? "Processing..." : "Generate"}
-          </button>
-          {error && <p className="mt-2 text-sm text-red-400">Error: {error}</p>}
+
+          <div className="mt-3 flex flex-wrap items-center gap-3">
+            <button
+              onClick={generate}
+              disabled={loading || !md.trim()}
+              className="inline-flex items-center rounded bg-blue-600 px-4 py-2 text-white disabled:opacity-50"
+            >
+              {loading ? "Processing..." : "Generate"}
+            </button>
+
+            <button
+              onClick={downloadMd}
+              disabled={!result}
+              className="inline-flex items-center rounded border px-3 py-2 text-sm disabled:opacity-50"
+              title={result ? "Download .md with YAML frontmatter" : "Generate first to enable"}
+            >
+              Download .md
+            </button>
+
+            {error && <p className="text-sm text-red-400">Error: {error}</p>}
+          </div>
         </div>
 
         {/* Right: results */}
