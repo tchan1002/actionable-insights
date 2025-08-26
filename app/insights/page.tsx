@@ -1,3 +1,4 @@
+"use client";
 import { useState } from "react";
 
 const tabs = ["YAML", "Nudge", "Saved", "JSON"] as const;
