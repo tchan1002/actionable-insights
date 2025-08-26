@@ -1,11 +1,9 @@
 "use client";
-import { useState } from "react";
+
+import { useMemo, useState } from "react";
 import { toFrontmatter } from "@/lib/yaml";
 
-const tabs = ["YAML", "Nudge", "Saved", "JSON"] as const;
-type Tab = (typeof tabs)[number];
-
-type ExtractResult = {
+type Doc = {
   yaml: {
     date: string | null;
     location: string | null;
@@ -27,104 +25,183 @@ type ExtractResult = {
     product_ideas: string[];
     quotes: string[];
   };
+  aligned_goals?: string[];
 };
 
+const tabs = ["YAML", "Nudge", "Saved", "JSON"] as const;
+type Tab = (typeof tabs)[number];
+
 export default function InsightsPage() {
-  const [md, setMd] = useState("");
-  const [activeTab, setActiveTab] = useState<Tab>("YAML");
+  const [md, setMd] = useState<string>("");
+  const [result, setResult] = useState<Doc | null>(null);
+  const [active, setActive] = useState<Tab>("YAML");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [result, setResult] = useState<ExtractResult | null>(null);
 
-  const yaml = result ? toFrontmatter(result) : "";
-
-  async function handleGenerate(): Promise<void> {
-    setError(null);
-    setLoading(true);
+  const yamlText = useMemo(() => {
     try {
-      const res = await fetch("/api/extract", {
+      return result ? toFrontmatter(result) : "YAML content goes here.";
+    } catch {
+      return "YAML rendering error.";
+    }
+  }, [result]);
+
+  async function generate() {
+    setLoading(true);
+    setError(null);
+    setResult(null);
+    try {
+      // 1) Extract
+      const extractRes = await fetch("/api/extract", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ journal: md }),
       });
-      if (!res.ok) throw new Error("request failed");
-      const json = (await res.json()) as ExtractResult;
-      setResult(json);
-    } catch {
-      setError("Failed to generate insights");
+      const extracted = await extractRes.json();
+      if (!extractRes.ok) throw new Error(extracted?.error || "Extract failed");
+
+      // 2) Nudge (dummy — echo or placeholder)
+      const nudgeRes = await fetch("/api/nudge", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(extracted),
+      });
+      const nudged = await nudgeRes.json();
+      if (!nudgeRes.ok) throw new Error(nudged?.error || "Nudge failed");
+
+      setResult(nudged as Doc);
+      setActive("YAML");
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "Something went wrong");
     } finally {
       setLoading(false);
     }
   }
 
-  const copyYaml = (): void => {
-    if (yaml) navigator.clipboard.writeText(yaml); // comment: use clipboard API to copy
-  };
+  async function copyYaml() {
+    if (!result) return;
+    try {
+      await navigator.clipboard.writeText(yamlText);
+    } catch {
+      // ignore copy errors in MVP
+    }
+  }
 
   return (
-    <div className="flex flex-col md:flex-row gap-4 p-4 md:p-8">
-      <div className="flex flex-1 flex-col gap-4">
-        <textarea
-          className="w-full h-96 p-2 border rounded"
-          placeholder="Paste Obsidian markdown here..."
-          value={md}
-          onChange={(e) => setMd(e.target.value)}
-        />
-        <button
-          type="button"
-          className="self-start px-4 py-2 bg-blue-600 text-white rounded disabled:opacity-50"
-          onClick={handleGenerate}
-          disabled={loading || !md}
-        >
-          {loading ? "Generating..." : "Generate"}
-        </button>
-        {error && <div className="text-red-600 text-sm">{error}</div>}
-      </div>
-      <div className="flex flex-1 flex-col">
-        <div className="flex border-b">
-          {tabs.map((tab) => (
-            <button
-              key={tab}
-              className={`px-3 py-2 text-sm ${
-                activeTab === tab
-                  ? "border-b-2 border-blue-600"
-                  : "text-gray-500"
-              }`}
-              onClick={() => setActiveTab(tab)}
-            >
-              {tab}
-            </button>
-          ))}
+    <div className="mx-auto max-w-6xl p-6 space-y-4">
+      <h1 className="text-2xl font-semibold">Actionable Insights</h1>
+
+      <div className="grid gap-6 md:grid-cols-2">
+        {/* Left: input */}
+        <div>
+          <textarea
+            className="w-full h-[320px] p-3 border rounded bg-black/60 text-gray-100 outline-none focus:ring-2 focus:ring-blue-500"
+            placeholder="Paste Obsidian markdown here..."
+            value={md}
+            onChange={(e) => setMd(e.target.value)}
+          />
+          <button
+            onClick={generate}
+            disabled={loading || !md.trim()}
+            className="mt-3 inline-flex items-center rounded bg-blue-600 px-4 py-2 text-white disabled:opacity-50"
+          >
+            {loading ? "Processing..." : "Generate"}
+          </button>
+          {error && <p className="mt-2 text-sm text-red-400">Error: {error}</p>}
         </div>
-        <div className="p-4 text-sm text-gray-500">
-          {activeTab === "YAML" && (
-            <div className="flex flex-col gap-2">
-              <pre className="whitespace-pre-wrap">{yaml}</pre>
+
+        {/* Right: results */}
+        <div>
+          {/* Tabs */}
+          <div className="flex gap-4 text-sm">
+            {tabs.map((t) => (
               <button
-                type="button"
-                className="self-start px-2 py-1 bg-gray-200 rounded disabled:opacity-50"
-                onClick={copyYaml}
-                disabled={!yaml}
+                key={t}
+                onClick={() => setActive(t)}
+                className={`pb-2 border-b-2 ${
+                  active === t ? "border-blue-500 text-blue-400" : "border-transparent text-gray-400"
+                }`}
               >
-                Copy YAML
+                {t}
               </button>
-            </div>
-          )}
-          {activeTab === "Nudge" && (
-            <pre className="whitespace-pre-wrap">{result?.nudge ?? ""}</pre>
-          )}
-          {activeTab === "Saved" && (
-            <pre className="whitespace-pre-wrap">
-              {result ? JSON.stringify(result.saved, null, 2) : ""}
-            </pre>
-          )}
-          {activeTab === "JSON" && (
-            <pre className="whitespace-pre-wrap">
-              {result ? JSON.stringify(result, null, 2) : ""}
-            </pre>
-          )}
+            ))}
+          </div>
+
+          {/* Panels */}
+          <div className="mt-3">
+            {active === "YAML" && (
+              <div>
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-sm text-gray-400">YAML frontmatter</span>
+                  <button
+                    onClick={copyYaml}
+                    disabled={!result}
+                    className="rounded border px-2 py-1 text-xs disabled:opacity-50"
+                  >
+                    Copy YAML
+                  </button>
+                </div>
+                <pre className="bg-gray-900 text-gray-100 p-3 rounded overflow-auto whitespace-pre-wrap">
+                  {yamlText}
+                </pre>
+              </div>
+            )}
+
+            {active === "Nudge" && (
+              <div className="space-y-2">
+                <div className="p-3 rounded border">
+                  {result?.nudge ? (
+                    <>
+                      <p className="font-semibold">{result.nudge}</p>
+                      {result.aligned_goals?.length ? (
+                        <p className="text-xs mt-2 text-gray-400">
+                          Supports: {result.aligned_goals.join(", ")}
+                        </p>
+                      ) : null}
+                    </>
+                  ) : (
+                    <p className="text-gray-400 text-sm">
+                      Nudge will appear after we enable the OpenAI key.
+                    </p>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {active === "Saved" && (
+              <div className="space-y-3">
+                <Block title="songs" data={result?.saved?.songs} />
+                <Block title="story_ideas" data={result?.saved?.story_ideas} />
+                <Block title="product_ideas" data={result?.saved?.product_ideas} />
+                <Block title="quotes" data={result?.saved?.quotes} />
+              </div>
+            )}
+
+            {active === "JSON" && (
+              <pre className="bg-gray-900 text-gray-100 p-3 rounded overflow-auto whitespace-pre-wrap text-xs">
+                {result ? JSON.stringify(result, null, 2) : "No JSON yet."}
+              </pre>
+            )}
+          </div>
         </div>
       </div>
+    </div>
+  );
+}
+
+function Block({ title, data }: { title: string; data?: string[] }) {
+  return (
+    <div>
+      <h3 className="text-sm font-medium mb-1">{title}</h3>
+      {data && data.length ? (
+        <ul className="list-disc pl-5 space-y-1">
+          {data.map((s, i) => (
+            <li key={`${title}-${i}`}>{s}</li>
+          ))}
+        </ul>
+      ) : (
+        <p className="text-gray-400 text-sm">None yet.</p>
+      )}
     </div>
   );
 }
